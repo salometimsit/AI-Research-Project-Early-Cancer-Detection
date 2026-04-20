@@ -1,0 +1,97 @@
+# ============================================================
+# HCC Prediction Pipeline — Default Configuration
+# ============================================================
+
+paths:
+  raw_dicom_dir: "data/raw"
+  processed_dir: "data/processed"       # NIfTI volumes and masks
+  patches_dir: "data/patches"           # Extracted 3D patches
+  features_dir: "data/features"         # Radiomics feature tables
+  model_dir: "models/checkpoints"
+  results_dir: "results"
+
+preprocessing:
+  hu_window:
+    lower: -30
+    upper: 150
+  normalize_range: [0.0, 1.0]
+  liver_segmentation:
+    tool: "totalsegmentator"
+    gpu: true
+
+registration:
+  stages:
+    - type: "rigid"
+    - type: "affine"
+    - type: "bspline"
+      grid_spacing_mm: [50, 20, 10]   # coarse-to-fine
+  metric: "mutual_information"
+  use_liver_mask: true
+  quality_threshold:
+    dice_liver_overlap: 0.85
+
+patch_extraction:
+  sizes: [32, 64]                       # compare both during experiments
+  default_size: 32
+  positive_negative_ratio: 1.0          # balanced sampling
+  overlap_fraction: 0.0                 # no overlap for training patches
+  min_liver_fraction: 0.5               # discard patches with <50% liver
+
+radiomics:
+  feature_classes:
+    - "firstorder"
+    - "glcm"
+    - "glrlm"
+    - "glszm"
+    - "shape"
+  bin_width: 25
+  normalize: true
+  label: 1
+
+varfs:
+  n_bootstrap: 100
+  stability_threshold: 0.7             # keep features selected in ≥70% of runs
+  correlation_threshold: 0.9           # drop highly correlated features
+
+model:
+  architecture: "resnet3d_18"
+  pretrained_weights: "medicalnet"      # MedicalNet or MONAI
+  freeze_blocks: 2                      # freeze first N residual blocks
+  dropout: 0.5
+  num_classes: 2
+
+training:
+  batch_size: 16
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-5
+  epochs: 50
+  early_stopping_patience: 10
+  loss: "focal"
+  focal_loss:
+    alpha: 0.75
+    gamma: 2.0
+  optimizer: "adam"
+  scheduler:
+    type: "cosine"
+    T_max: 50
+  num_workers: 4
+
+augmentation:
+  random_rotation_degrees: 15
+  elastic_deformation: true
+  intensity_shift: 0.1
+  intensity_scale: 0.1
+  random_flip: true
+
+evaluation:
+  cross_validation:
+    strategy: "leave_one_patient_out"   # or "kfold"
+    n_folds: 5
+  metrics:
+    - "auc_roc"
+    - "sensitivity"
+    - "specificity"
+    - "precision_recall_auc"
+  gradcam: true
+
+seed: 42
