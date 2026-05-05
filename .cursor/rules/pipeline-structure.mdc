@@ -1,0 +1,19 @@
+---
+description: Pipeline architecture rules
+alwaysApply: true
+---
+
+# Pipeline Structure Rules
+
+- All user-facing entry points live in `scripts/` and accept a `--config` flag.
+- All reusable logic lives in `src/` as importable Python modules.
+- Every pipeline step must save its output artifact to disk before the next
+  step begins. Never pass intermediate state only in memory across phase
+  boundaries.
+- Results must be reproducible from the same `seed + config + data`.
+- Use `src.utils.logger.get_logger(__name__)` in every module.
+- Every saved artifact must be logged with its full path at `INFO` level
+  immediately after saving.
+- Never reintroduce removed phases (e.g. registration, manual patch
+  extraction); the architecture is dual-track radiomics + 3D SwinViT with
+  cross-attention fusion.

@@ -1,0 +1,38 @@
+---
+description: Project-wide code conventions for the HCC pipeline
+alwaysApply: true
+---
+
+# Project Conventions
+
+- Add type hints to every function signature.
+- Use Google-style docstrings on all public functions and classes.
+- Always use `pathlib.Path` for filesystem paths; never use string concatenation.
+- Never hardcode hyperparameters. Read them from `configs/default.yaml` via
+  `src.utils.config.load_config`.
+- Always call `set_seed(cfg["seed"])` before any random operation.
+- Use `tqdm` for any loop that iterates over patients or training epochs.
+- Every module must have a corresponding `__init__.py` that exports its public
+  classes/functions.
+- Log entry/exit of important functions at `DEBUG` level using
+  `src.utils.logger.get_logger(__name__)`.
+
+# Module documentation template
+
+Every new module under `src/` must start with a docstring that includes:
+
+- One-line summary.
+- "Pipeline stage: <letter> in A->M".
+- "Inputs", "Outputs", "Side effects" sections.
+- "Failure modes" listing typical errors and what they mean.
+
+# Logging and run metadata
+
+- Each `scripts/*.py` entry point must:
+  - Accept `--log-level {DEBUG,INFO,WARNING,ERROR}` and forward to `setup_logger`.
+  - Call `record_run(<phase>, cfg, vars(args))` at the start of `main()`.
+  - Use `log_section` to mark major phase boundaries and `log_dict` to dump
+    the relevant config sub-dicts at the start.
+  - Wrap every per-patient loop in a try/except that calls
+    `record_failure(<phase>, patient_id, exc)` so failed runs leave a
+    structured JSONL trail under `logs/<phase>_failures.jsonl`.

@@ -1,50 +1,67 @@
-# ============================================================
-# HCC Prediction Pipeline — Default Configuration
-# ============================================================
-
 paths:
-  raw_dicom_dir: "data/raw"
-  processed_dir: "data/processed"       # NIfTI volumes and masks
-  patches_dir: "data/patches"           # Extracted 3D patches
-  features_dir: "data/features"         # Radiomics feature tables
-  model_dir: "models/checkpoints"
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  labels_csv: "data/labels.csv"
+  model_save_dir: "models/saved"
   results_dir: "results"
+  attention_dir: "attention"
+  tcav_dir: "tcav"
+  plots_dir: "Plots"
+  logs_dir: "logs"
+  # Intermediate feature artefacts (centralised so no script hardcodes them).
+  features:
+    raw_radiomics_csv: "data/raw_radiomics_features.csv"
+    varfs_filtered_csv: "data/varfs_filtered_features.csv"
+    varfs_selected_json: "data/varfs_selected_features.json"
+    deep_features_csv: "data/deep_features.csv"
+    swinvit_oof_csv: "data/swinvit_oof_scores.csv"
+    fusion_oof_csv: "data/fusion_oof_scores.csv"
+
+drive:
+  # Map each patient_id to its Google Drive file ID (shared link, no auth).
+  # Example:
+  #   P001: "<google_drive_file_id>"
+  #   P002: "<google_drive_file_id>"
+  patient_files: {}
 
 preprocessing:
+  # Real-world DICOM series descriptions are inconsistent across hospitals/technicians.
+  # Using a keyword list ensures all portal-venous variants are matched.
+  phase_keywords: ["portal", "venous", "pv", "ven", "port"]
   hu_window:
-    lower: -30
-    upper: 150
-  normalize_range: [0.0, 1.0]
+    lower: -30                      # standard soft-tissue / liver HU window lower bound
+    upper: 200                      # standard soft-tissue / liver HU window upper bound
+  hu_window_experiments:            # alternative HU windows compared during ablation
+    - [-30, 200]
+    - [-160, 240]
+    - [-30, 150]
+  zscore_normalization: true
+  normalization_scope: "liver_only" # Z-score computed on liver voxels only; prevents signal
+  mask_required_for_zscore: true    # dilution from fat, air and bone surrounding the liver
+  voxel_spacing: [1.0, 1.0, 1.0]   # isotropic resampling target (mm) — implemented in preprocessing PR
   liver_segmentation:
     tool: "totalsegmentator"
     gpu: true
 
-registration:
-  stages:
-    - type: "rigid"
-    - type: "affine"
-    - type: "bspline"
-      grid_spacing_mm: [50, 20, 10]   # coarse-to-fine
-  metric: "mutual_information"
-  use_liver_mask: true
-  quality_threshold:
-    dice_liver_overlap: 0.85
+swin_vit:
+  img_size: [96, 96, 96]            # cropped liver volume size fed to SwinViT
+  patch_size: [4, 4, 4]             # 3D patch tokenisation size
+  in_channels: 1                    # single-channel CT input
+  embed_dim: 48                     # base embedding dim (Swin-Tiny preset)
+  depths: [2, 2, 6, 2]              # Swin-Tiny stage depths
+  num_heads: [3, 6, 12, 24]         # attention heads per stage (doubles each stage)
+  window_size: [6, 6, 6]            # 96 / 6 = 16 (must divide img_size evenly; 7 does not)
+  mlp_ratio: 4.0                    # MLP hidden dim = mlp_ratio * embed_dim
+  drop_path_rate: 1.0e-1            # stochastic depth rate
+  dropout: 1.0e-1
 
-patch_extraction:
-  sizes: [32, 64]                       # compare both during experiments
-  default_size: 32
-  positive_negative_ratio: 1.0          # balanced sampling
-  overlap_fraction: 0.0                 # no overlap for training patches
-  min_liver_fraction: 0.5               # discard patches with <50% liver
+cross_attention:
+  num_heads: 4                      # multi-head attention heads in the fusion layer
+  hidden_dim: 256                   # query/key/value projection dim
 
 radiomics:
-  feature_classes:
-    - "firstorder"
-    - "glcm"
-    - "glrlm"
-    - "glszm"
-    - "shape"
-  bin_width: 25
+  feature_classes: ["firstorder", "glcm", "glrlm", "glszm", "shape"]
+  bin_width: 25                     # PyRadiomics intensity bin width (HU); standard for CT
   normalize: true
   label: 1
 
@@ -74,6 +91,8 @@ training:
   scheduler:
     type: "cosine"
     T_max: 50
+  deterministic: true               # mandatory for reproducible AUC/Sensitivity across runs
+  cudnn_benchmark: false            # must be false when deterministic is true
   num_workers: 4
 
 augmentation:
@@ -93,5 +112,26 @@ evaluation:
     - "specificity"
     - "precision_recall_auc"
   gradcam: true
+
+tcav:
+  # Layer hook for activation extraction / gradients (must sit on the forward path).
+  target_layer: "encoder.layers3"
+  target_class: 1                   # class index whose logit is differentiated (1 = HCC)
+  # Concept construction (RadiomicsConceptBuilder + TCAV null distribution).
+  quartile_split: 0.25            # median split threshold for high/low radiomics arms
+  top_n_features: 15              # how many VaRFS-ranked features become per-feature concepts
+  feature_families: ["firstorder", "glcm", "glrlm", "glszm", "shape"]
+  n_random_concepts: 10           # size of null distribution for permutation significance
+  random_concept_size: 10          # patients per random concept arm (must allow ≥2 pos / ≥2 neg)
+  max_samples: null               # cap directional-derivative samples per score (null = use all)
+  permutation_sets: 30             # synonym / notebook parity — kept alongside n_random_concepts
+  significance_threshold: 0.05    # p-value cutoff — concepts below this are marked significant
+  cav_C: 0.1                       # LogisticRegression C — strong regularisation on small cohorts
+  extract_batch_size: 1            # DataLoader batch size for activation extraction
+  extract_num_workers: 0           # DataLoader workers for extraction (0 = main process)
+
+visualization:
+  window_center: 40                # HU window centre for liver CT display (clinical standard)
+  window_width: 400                # HU window width for liver CT display (clinical standard)
 
 seed: 42

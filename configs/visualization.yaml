@@ -1,0 +1,24 @@
+# Presentation parameters for all plot functions in src/utils/visualization.py.
+#
+# This file is OPTIONAL — the pipeline runs without it and every visualization
+# function falls back to its built-in defaults when this file is absent.
+# Load via:
+#   from src.utils.config import load_viz_config
+#   viz_cfg = load_viz_config()
+#
+# Pass the returned dict (or a sub-dict) to the relevant plot function as
+# the ``viz_cfg`` keyword argument.
+
+dpi: 150                           # output resolution for all saved PNG plots
+
+figsize:
+  roc: [6, 6]                      # ROC comparison chart (width, height in inches)
+  ablation: [6, 4]                 # 3-model ablation bar chart
+  training_curves: [8, 5]          # per-epoch train/val loss overlay
+  slice_overlay: [5, 5]            # single CT slice + mask overlay
+  concept_heatmap_width: 4         # TCAV concept importance heatmap — fixed width
+  concept_heatmap_min_height: 3    # minimum height (inches) regardless of label count
+  concept_heatmap_height_per_label: 0.30  # height added per concept label
+  tcav_bar_width: 8                # TCAV horizontal bar chart — fixed width
+  tcav_bar_min_height: 3           # minimum height regardless of concept count
+  tcav_bar_height_per_label: 0.35  # height added per concept bar
