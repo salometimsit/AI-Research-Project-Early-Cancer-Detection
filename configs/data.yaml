@@ -1,0 +1,67 @@
+cropping:
+  padding: 5
+
+dataset:
+  allow_missing: true
+  augmentation_seed_base: null
+
+augmentation:
+  random_rotation_degrees: 15
+  random_rotation_prob: 0.5
+  elastic_deformation: true
+  elastic_prob: 0.3
+  elastic_sigma_range: [5, 7]
+  elastic_magnitude_range: [50, 100]
+  random_flip: true
+  random_flip_axes: [0, 1, 2]
+  random_flip_prob: 0.5
+  gaussian_noise: true
+  gaussian_noise_prob: 0.2
+  gaussian_noise_std: 0.01
+  enable_intensity_shift: false
+  intensity_shift: 0.1
+  intensity_shift_prob: 0.5
+  enable_intensity_scale: false
+  intensity_scale: 0.1
+  intensity_scale_prob: 0.5
+  enable_contrast_adjust: true
+  contrast_prob: 0.3
+  contrast_gamma: [0.8, 1.2]
+
+dicom_loader:
+  phase_keywords:
+    portal_venous: ["portal", "venous", "pv", "60s", "70s", "portalvenous"]
+    arterial: ["arterial", "art", "25s", "30s"]
+    delayed: ["delayed", "delay", "equilibrium", "5min", "180s"]
+    non_contrast: ["non-contrast", "non contrast", "noncontrast", "plain", "pre"]
+  metadata_keys:
+    description: ["0008|103e"]   # SeriesDescription
+    protocol: ["0018|1030"]      # ProtocolName
+    slice_thickness: ["0018|0050"]
+  matching:
+    use_word_boundaries: true
+    normalize_separators: true
+  series_selection:
+    prefer_thinner_slices: true
+    thickness_tolerance_mm: 0.1
+    fallback_to_max_slices_when_missing_metadata: true
+
+liver_segmentation:
+  roi_subset: ["liver"]
+  ml: false
+  fast: false
+  require_non_empty_mask: true
+
+preprocessing:
+  hu_window:
+    lower: -30
+    upper: 200
+  zscore:
+    enabled: true
+    scope: "liver_only"
+    std_epsilon: 1.0e-6
+    std_fallback: "one"   # one | global
+    background_fill_value: 0.0
+  output:
+    normalized_filename: "before_norm.nii.gz"
+    overwrite_original: false

@@ -1,0 +1,40 @@
+baseline:
+  model: "random_forest"
+  n_estimators: 200
+  max_depth: null
+  class_weight: "balanced"
+  random_state: 42
+  cv:
+    max_folds: 5
+    shuffle: true
+    random_state: 42
+  imputation:
+    strategy: "median"
+  scaling:
+    enabled: true
+  safety:
+    replace_inf_with_nan: true
+    fail_fast_on_preprocess_error: true
+
+radiomics:
+  feature_classes: ["firstorder", "glcm", "glrlm", "glszm", "shape"]
+  bin_width: 25
+  normalize: true
+  label: 1
+  # Isotropic resampling (mm). Set to null to disable (scanner-native spacing).
+  resampled_pixel_spacing: [1.0, 1.0, 1.0]
+  interpolator: "sitkBSpline"
+  min_mask_voxels: 50
+  io:
+    volume_filename: "before_cropped.nii.gz"
+    mask_filename: "before_liver.nii.gz"
+  progress:
+    desc: "Radiomics extraction"
+    unit: "patient"
+
+varfs:
+  n_bootstrap: 100
+  stability_threshold: 0.7             # keep features selected in >=70% of runs
+  correlation_threshold: 0.9           # drop highly correlated features
+  top_k_per_iter: 30
+  use_robust_scaler: false             # apply RobustScaler before ANOVA test

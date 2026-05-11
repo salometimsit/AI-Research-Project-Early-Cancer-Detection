@@ -19,6 +19,9 @@ Failure modes
 * Missing or malformed YAML -> standard PyYAML errors.
 * ``ensure_dirs`` skips path entries that look like files (have a
   suffix), so ``labels.csv`` is not turned into a directory.
+* ``load_data_config`` / ``load_features_config`` require existing,
+  non-empty YAML files with mandatory sections (fail-fast; no silent
+  empty dict).
 """
 
 from __future__ import annotations
@@ -37,12 +40,169 @@ _logger = get_logger(__name__)
 _DEFAULT_CONFIG_PATH = (
     Path(__file__).resolve().parents[2] / "configs" / "default.yaml"
 )
+_DEFAULT_DATA_CONFIG_PATH = (
+    Path(__file__).resolve().parents[2] / "configs" / "data.yaml"
+)
+_DEFAULT_FEATURES_CONFIG_PATH = (
+    Path(__file__).resolve().parents[2] / "configs" / "features.yaml"
+)
 _DEFAULT_VIZ_CONFIG_PATH = (
     Path(__file__).resolve().parents[2] / "configs" / "visualization.yaml"
 )
 
 
 _REQUIRED_SECTIONS: tuple[str, ...] = ("paths", "seed", "preprocessing", "swin_vit")
+
+_REQUIRED_DATA_SECTIONS: tuple[str, ...] = (
+    "cropping",
+    "dataset",
+    "augmentation",
+    "dicom_loader",
+    "liver_segmentation",
+    "preprocessing",
+)
+
+_REQUIRED_FEATURES_TOP_LEVEL: tuple[str, ...] = ("baseline", "radiomics", "varfs")
+
+_RAD_REQUIRED_KEYS: tuple[str, ...] = (
+    "feature_classes",
+    "bin_width",
+    "normalize",
+    "min_mask_voxels",
+    "label",
+    "io",
+    "progress",
+)
+
+_VARFS_REQUIRED_KEYS: tuple[str, ...] = (
+    "n_bootstrap",
+    "stability_threshold",
+    "correlation_threshold",
+    "top_k_per_iter",
+    "use_robust_scaler",
+)
+
+_BASELINE_REQUIRED_KEYS: tuple[str, ...] = (
+    "model",
+    "cv",
+    "imputation",
+    "scaling",
+    "safety",
+)
+
+
+def _ensure_config_path_exists(cfg_path: Path, label: str) -> None:
+    """Raise if ``cfg_path`` is not a readable regular file."""
+    if not cfg_path.is_file():
+        _logger.error("%s config MANDATORY file not found at %s", label, cfg_path)
+        raise FileNotFoundError(
+            f"Missing {label} config at {cfg_path}. Cannot proceed without it."
+        )
+
+
+def _ensure_loaded_mapping(
+    raw: Any,
+    cfg_path: Path,
+    label: str,
+) -> dict[str, Any]:
+    """Return a non-empty dict or raise."""
+    if raw is None or raw == {}:
+        raise ValueError(
+            f"{label} config at {cfg_path} is empty. Please define required sections."
+        )
+    if not isinstance(raw, dict):
+        raise TypeError(
+            f"{label} config at {cfg_path} must parse to a mapping (got {type(raw).__name__})."
+        )
+    return raw
+
+
+def _require_sections(
+    cfg: dict[str, Any],
+    required: tuple[str, ...],
+    cfg_path: Path,
+    label: str,
+) -> None:
+    """Raise ``KeyError`` if any top-level section is missing."""
+    missing = [k for k in required if k not in cfg]
+    if missing:
+        raise KeyError(
+            f"{label} config at {cfg_path} missing required section(s): "
+            f"{sorted(missing)}"
+        )
+
+
+def _require_subdict(
+    cfg: dict[str, Any],
+    key: str,
+    cfg_path: Path,
+    label: str,
+) -> dict[str, Any]:
+    """Return ``cfg[key]`` if it is a non-empty mapping."""
+    if key not in cfg:
+        raise KeyError(
+            f"{label} config at {cfg_path} missing required section '{key}'."
+        )
+    block = cfg[key]
+    if not isinstance(block, dict):
+        raise TypeError(
+            f"{label}['{key}'] must be a mapping in {cfg_path} (got {type(block).__name__})."
+        )
+    if not block:
+        raise ValueError(
+            f"{label}['{key}'] is empty in {cfg_path}. Please define required keys."
+        )
+    return block
+
+
+def _validate_features_nested(features_cfg: dict[str, Any], cfg_path: Path) -> None:
+    """Validate ``radiomics``, ``varfs``, and ``baseline`` blocks."""
+    label = "features"
+    rad = _require_subdict(features_cfg, "radiomics", cfg_path, label)
+    for rk in _RAD_REQUIRED_KEYS:
+        if rk not in rad:
+            raise KeyError(
+                f"features['radiomics'] missing required key '{rk}' in {cfg_path}"
+            )
+    io = rad["io"]
+    if not isinstance(io, dict):
+        raise TypeError(f"features['radiomics']['io'] must be a dict in {cfg_path}")
+    for ik in ("volume_filename", "mask_filename"):
+        if ik not in io:
+            raise KeyError(
+                f"features['radiomics']['io'] missing '{ik}' in {cfg_path}"
+            )
+    prog = rad["progress"]
+    if not isinstance(prog, dict):
+        raise TypeError(
+            f"features['radiomics']['progress'] must be a dict in {cfg_path}"
+        )
+    for pk in ("desc", "unit"):
+        if pk not in prog:
+            raise KeyError(
+                f"features['radiomics']['progress'] missing '{pk}' in {cfg_path}"
+            )
+
+    spacing = rad.get("resampled_pixel_spacing")
+    if spacing is not None and rad.get("interpolator") in (None, ""):
+        raise ValueError(
+            f"features['radiomics'] at {cfg_path}: 'interpolator' is required when "
+            "'resampled_pixel_spacing' is set (non-null)."
+        )
+
+    varfs = _require_subdict(features_cfg, "varfs", cfg_path, label)
+    for vk in _VARFS_REQUIRED_KEYS:
+        if vk not in varfs:
+            raise KeyError(
+                f"features['varfs'] missing required key '{vk}' in {cfg_path}"
+            )
+
+    baseline = _require_subdict(features_cfg, "baseline", cfg_path, label)
+    for bk in _BASELINE_REQUIRED_KEYS:
+        if bk not in baseline:
+            raise KeyError(
+                f"features['baseline'] missing required key '{bk}' in {cfg_path}"
+            )
 
 
 def load_config(path: str | Path | None = None) -> dict[str, Any]:
@@ -264,3 +424,72 @@ def load_viz_config(path: str | Path | None = None) -> dict[str, Any]:
         viz_cfg = yaml.safe_load(fh) or {}
     _logger.debug("Loaded visualization config from %s.", cfg_path)
     return viz_cfg
+
+
+def load_data_config(path: str | Path | None = None) -> dict[str, Any]:
+    """Load the mandatory data-module config (cropping, dataset, preprocessing).
+
+    This config is intentionally decoupled from ``default.yaml`` so parameters
+    for modules under ``src/data/`` can evolve independently and stay grouped
+    in one canonical file. The file **must** exist and contain all required
+    top-level sections.
+
+    Args:
+        path: Path to the YAML data config. Defaults to
+            ``configs/data.yaml`` (resolved relative to this module).
+
+    Returns:
+        The parsed YAML document as a nested ``dict``.
+
+    Raises:
+        FileNotFoundError: The resolved path is not a file.
+        ValueError: The document is empty after parsing.
+        TypeError: YAML did not parse to a mapping.
+        KeyError: A required top-level section is missing.
+        yaml.YAMLError: The file exists but is not valid YAML.
+        UnicodeDecodeError: The file exists but is not valid UTF-8.
+    """
+    label = "data"
+    cfg_path = Path(path) if path is not None else _DEFAULT_DATA_CONFIG_PATH
+    _ensure_config_path_exists(cfg_path, label)
+    with open(cfg_path, "r", encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh)
+    data_cfg = _ensure_loaded_mapping(raw, cfg_path, label)
+    _require_sections(data_cfg, _REQUIRED_DATA_SECTIONS, cfg_path, label)
+    _logger.info("Loaded data config from %s", cfg_path.resolve())
+    return data_cfg
+
+
+def load_features_config(path: str | Path | None = None) -> dict[str, Any]:
+    """Load the mandatory features-module config (baseline, radiomics, VaRFS).
+
+    This config decouples feature-engineering and classical-ML parameters from
+    ``default.yaml`` so they can evolve independently. The file **must** exist,
+    be non-empty, and include validated ``baseline``, ``radiomics``, and
+    ``varfs`` blocks.
+
+    Args:
+        path: Path to the YAML features config. Defaults to
+            ``configs/features.yaml`` (resolved relative to this module).
+
+    Returns:
+        The parsed YAML document as a nested ``dict``.
+
+    Raises:
+        FileNotFoundError: The resolved path is not a file.
+        ValueError: The document is empty, or radiomics resampling rule violated.
+        TypeError: YAML did not parse to a mapping, or a nested block has wrong type.
+        KeyError: A required section or nested key is missing.
+        yaml.YAMLError: The file exists but is not valid YAML.
+        UnicodeDecodeError: The file exists but is not valid UTF-8.
+    """
+    label = "features"
+    cfg_path = Path(path) if path is not None else _DEFAULT_FEATURES_CONFIG_PATH
+    _ensure_config_path_exists(cfg_path, label)
+    with open(cfg_path, "r", encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh)
+    features_cfg = _ensure_loaded_mapping(raw, cfg_path, label)
+    _require_sections(features_cfg, _REQUIRED_FEATURES_TOP_LEVEL, cfg_path, label)
+    _validate_features_nested(features_cfg, cfg_path)
+    _logger.info("Loaded features config from %s", cfg_path.resolve())
+    return features_cfg

@@ -1,6 +1,13 @@
 """Utility helpers (config, logging, run metadata, visualization, TCAV)."""
 
-from src.utils.config import ensure_dirs, load_config, load_viz_config, set_seed
+from src.utils.config import (
+    ensure_dirs,
+    load_config,
+    load_data_config,
+    load_features_config,
+    load_viz_config,
+    set_seed,
+)
 from src.utils.logger import (
     get_logger,
     log_dict,
@@ -15,6 +22,8 @@ __all__ = [
     "ensure_dirs",
     "get_logger",
     "load_config",
+    "load_data_config",
+    "load_features_config",
     "load_viz_config",
     "log_dict",
     "log_exception",

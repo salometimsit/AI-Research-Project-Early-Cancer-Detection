@@ -52,11 +52,12 @@ flowchart LR
 
 ## Configuration files
 
-The project uses two YAML config files with different criticality levels:
+The project uses three YAML config files with different criticality levels:
 
 | File | Required | Purpose |
 | ---- | -------- | ------- |
-| [`configs/default.yaml`](configs/default.yaml) | **Yes** — pipeline fails without it | All scientific, clinical and training hyperparameters. Validated at load time: missing `paths`, `seed`, `preprocessing` or `swin_vit` sections raise `KeyError` immediately. |
+| [`configs/default.yaml`](configs/default.yaml) | **Yes** — pipeline fails without it | Global pipeline/train/model config. Validated at load time: missing `paths`, `seed`, `preprocessing` or `swin_vit` sections raise `KeyError` immediately. |
+| [`configs/data.yaml`](configs/data.yaml) | **Yes** for data scripts | Parameters for `src/data/*`: DICOM loader matching/ranking, liver segmentation, preprocessing output and Z-score behavior, crop padding, dataset augmentation policy. |
 | [`configs/visualization.yaml`](configs/visualization.yaml) | No — optional | Presentation parameters (DPI, figure sizes). When absent every plot function uses built-in defaults. |
 
 ### `configs/default.yaml` — sections reference
@@ -64,7 +65,7 @@ The project uses two YAML config files with different criticality levels:
 | Section | Key parameters | Consumed by |
 | ------- | -------------- | ----------- |
 | `paths` | All input/output directory and file paths | Every script via `ensure_dirs` |
-| `preprocessing` | `phase_keywords`, `hu_window`, `zscore_normalization`, `normalization_scope`, `voxel_spacing` | `run_preprocessing.py` |
+| `preprocessing` | phase selection + global preprocessing toggles (e.g. `target_phase`) | `run_preprocessing.py` |
 | `swin_vit` | `img_size`, `window_size` (must divide `img_size`), `embed_dim`, `depths` | `src/models/swin_vit.py` |
 | `cross_attention` | `num_heads`, `hidden_dim` | `src/models/fusion.py` |
 | `radiomics` | `feature_classes`, `bin_width` | `run_radiomics.py` |
@@ -73,6 +74,16 @@ The project uses two YAML config files with different criticality levels:
 | `tcav` | `cav_C`, `significance_threshold`, `permutation_sets`, `extract_batch_size` | `run_tcav.py`, `src/utils/tcav/` |
 | `visualization` | `window_center`, `window_width` | `src/utils/visualization.py` |
 | `seed` | Single integer | `set_seed(cfg)` — called once per script |
+
+### `configs/data.yaml` — sections reference
+
+| Section | Key parameters | Consumed by |
+| ------- | -------------- | ----------- |
+| `dicom_loader` | `phase_keywords`, metadata keys, matching + series ranking policy | `src/data/dicom_loader.py` |
+| `liver_segmentation` | `roi_subset`, `ml`, `fast`, `require_non_empty_mask` | `src/data/liver_segmentation.py` |
+| `preprocessing` | HU window, liver-only Z-score policy, output filename (`before_norm.nii.gz`) | `src/data/preprocessing.py` |
+| `cropping` | `padding` | `src/data/cropping.py` |
+| `dataset` / `augmentation` | missing-sample policy, deterministic augmentation seed, augmentation knobs | `src/data/dataset.py` |
 
 ### `configs/visualization.yaml` — sections reference
 
@@ -106,7 +117,8 @@ task-specific; Phase 5 fusion still uses deep features produced by this encoder 
 data/raw/<PID>/before/                     <- DICOM (downloaded, never written)
         |
         v   scripts/run_preprocessing.py
-data/processed/<PID>/before.nii.gz          <- normalized HU + Z-score
+data/processed/<PID>/before.nii.gz          <- raw NIfTI from DICOM loader
+data/processed/<PID>/before_norm.nii.gz     <- HU-windowed + liver-only Z-score
 data/processed/<PID>/before_liver.nii.gz    <- TotalSegmentator binary mask
 data/processed/<PID>/before_cropped.nii.gz  <- cropped to liver bbox
 data/processed/<PID>/crop_metadata.json     <- bbox + zscore + original shape

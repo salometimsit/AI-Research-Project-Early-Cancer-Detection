@@ -59,13 +59,15 @@ Project_root/
 ├── requirements.txt
 ├── README.md
 ├── configs/
-│   ├── default.yaml                # Required: all scientific/clinical hyperparameters
+│   ├── default.yaml                # Required: global pipeline/train/model config
+│   ├── data.yaml                   # Required: src/data module parameters
 │   └── visualization.yaml          # Optional: DPI and figure sizes for plots
 ├── data/
 │   ├── raw/                        # Original DICOM (data/raw/<PID>/before/)
 │   ├── processed/                  # NIfTI volumes, masks, crop_metadata
 │   │   └── <PID>/
 │   │       ├── before.nii.gz
+│   │       ├── before_norm.nii.gz
 │   │       ├── before_liver.nii.gz
 │   │       ├── before_cropped.nii.gz
 │   │       └── crop_metadata.json
@@ -156,8 +158,9 @@ python scripts/download_data.py --config configs/default.yaml --list
 ## Usage
 
 ```bash
-# Phase 2: DICOM → NIfTI → HU/Z-score → segment → crop
-python scripts/run_preprocessing.py --config configs/default.yaml
+# Phase 2: DICOM → NIfTI (before.nii.gz) → HU/Z-score (before_norm.nii.gz)
+#          → segment → crop
+python scripts/run_preprocessing.py --config configs/default.yaml --data-config configs/data.yaml
 
 # Phase 3: PyRadiomics → VaRFS → classical baseline
 python scripts/run_radiomics.py --config configs/default.yaml
@@ -173,7 +176,7 @@ python scripts/run_evaluation.py --config configs/default.yaml
 python scripts/run_tcav.py --config configs/default.yaml --mode both
 
 # Inference on a new patient
-python scripts/run_inference.py --config configs/default.yaml \
+python scripts/run_inference.py --config configs/default.yaml --data-config configs/data.yaml \
     --dicom_dir /path/to/new_patient/before/
 ```
 
@@ -197,6 +200,12 @@ Key highlights:
 | `tcav` | `cav_C` (LogisticRegression C), `significance_threshold`, `extract_batch_size` |
 | `visualization` | `window_center`, `window_width` — clinical HU window for CT display |
 | `seed` | Global random seed (passed to `set_seed(cfg)`) |
+
+### `configs/data.yaml` (required)
+
+`src/data/*` module parameters: cropping, dataset augmentation policy, DICOM loader
+matching/ranking, liver segmentation options, and preprocessing (HU/Z-score/output file names).
+Scripts that run data stages load this file via `--data-config`.
 
 ### `configs/visualization.yaml` (optional)
 
@@ -252,7 +261,8 @@ Papers to cite: Tang et al., CVPR 2022 (self-supervised 3D Swin); Hatamizadeh et
 | Stage          | Artifact                                      |
 | -------------- | --------------------------------------------- |
 | DICOM ingest   | `data/raw/<PID>/before/`                      |
-| NIfTI volume   | `data/processed/<PID>/before.nii.gz`          |
+| Raw NIfTI      | `data/processed/<PID>/before.nii.gz`          |
+| Normalized CT  | `data/processed/<PID>/before_norm.nii.gz`     |
 | Liver mask     | `data/processed/<PID>/before_liver.nii.gz`    |
 | Cropped liver  | `data/processed/<PID>/before_cropped.nii.gz`  |
 | Crop metadata  | `data/processed/<PID>/crop_metadata.json`     |
