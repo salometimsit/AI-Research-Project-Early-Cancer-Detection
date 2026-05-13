@@ -125,10 +125,13 @@ class HCCDataset(Dataset):
         """Load one cropped volume and enforce shape expectations."""
         volume = nib.load(str(path)).get_fdata().astype(np.float32)
         if self.target_size is not None and volume.shape != self.target_size:
-            raise ValueError(
-                f"Volume {path.name} shape {volume.shape} does not match "
-                f"target {self.target_size}. Run preprocessing resize first."
+            logger.warning(
+                "Resizing %s from %s to target_size=%s in HCCDataset.",
+                path.name,
+                volume.shape,
+                self.target_size,
             )
+            volume = _resize_volume(volume, self.target_size, is_mask=False)
         return volume
 
     def set_epoch(self, epoch: int) -> None:

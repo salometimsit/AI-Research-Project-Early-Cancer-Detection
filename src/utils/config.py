@@ -40,6 +40,9 @@ _logger = get_logger(__name__)
 _DEFAULT_CONFIG_PATH = (
     Path(__file__).resolve().parents[2] / "configs" / "default.yaml"
 )
+_DEFAULT_MODELS_CONFIG_PATH = (
+    Path(__file__).resolve().parents[2] / "configs" / "models.yaml"
+)
 _DEFAULT_DATA_CONFIG_PATH = (
     Path(__file__).resolve().parents[2] / "configs" / "data.yaml"
 )
@@ -132,6 +135,21 @@ def _require_sections(
         )
 
 
+def _deep_merge_dicts(
+    base: dict[str, Any],
+    override: dict[str, Any],
+) -> dict[str, Any]:
+    """Return deep merge of ``base`` with ``override`` precedence."""
+    merged = dict(base)
+    for key, value in override.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_dicts(base_value, value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def _require_subdict(
     cfg: dict[str, Any],
     key: str,
@@ -206,30 +224,36 @@ def _validate_features_nested(features_cfg: dict[str, Any], cfg_path: Path) -> N
 
 
 def load_config(path: str | Path | None = None) -> dict[str, Any]:
-    """Load and parse a YAML configuration file.
+    """Load and parse the main YAML config, merged with ``models.yaml``.
 
     Args:
-        path: Path to the YAML config file. Accepts either a ``str`` or a
+        path: Path to the YAML base config file. Accepts either a ``str`` or a
             :class:`pathlib.Path`. When ``None`` (the default) the project's
             canonical ``configs/default.yaml`` (resolved relative to this
-            module) is used.
+            module) is used. The loaded base config is then deep-merged with
+            ``configs/models.yaml`` (models file has precedence on conflicts).
 
     Returns:
-        The parsed YAML document as a nested ``dict``. Top-level keys are
-        the config sections (``paths``, ``preprocessing``, ``training``,
-        etc.). Returns an empty ``dict`` if the file is empty.
+        The merged YAML document as a nested ``dict``. Top-level keys are
+        config sections (``paths``, ``preprocessing``, ``swin_vit``,
+        ``training``, etc.).
 
     Raises:
-        FileNotFoundError: The resolved config path does not exist.
+        FileNotFoundError: The resolved base config path or ``models.yaml``
+            does not exist.
         PermissionError: The file exists but cannot be read.
         yaml.YAMLError: The file is not valid YAML (parser/scanner error).
         UnicodeDecodeError: The file is not valid UTF-8.
         KeyError: A mandatory config section (paths, seed, preprocessing,
-            swin_vit) is absent from the loaded document.
+            swin_vit) is absent from the merged document.
     """
     cfg_path = Path(path) if path is not None else _DEFAULT_CONFIG_PATH
+    models_cfg_path = _DEFAULT_MODELS_CONFIG_PATH
     with open(cfg_path, "r", encoding="utf-8") as fh:
-        cfg = yaml.safe_load(fh) or {}
+        base_cfg = yaml.safe_load(fh) or {}
+    with open(models_cfg_path, "r", encoding="utf-8") as fh:
+        models_cfg = yaml.safe_load(fh) or {}
+    cfg = _deep_merge_dicts(base_cfg, models_cfg)
     for key in _REQUIRED_SECTIONS:
         if key not in cfg:
             raise KeyError(

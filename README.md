@@ -222,19 +222,32 @@ Pass `viz_cfg=viz_cfg` to any `plot_*` call to override DPI and figure sizes.
 
 Training a 3D Swin Transformer **from scratch** on a small patient cohort is difficult and
 often unstable. The pipeline supports **warm-starting only the MONAI Swin backbone**
-(`SwinViT3D.encoder`) from an external `.pth` checkpoint while keeping the classification
+(`SwinViT3D.encoder`) from an external checkpoint (`.pth` / `.pt`) while keeping the classification
 `head` randomly initialized for your binary HCC task.
+
+Recommended pretrained checkpoint to start training (MONAI extra test data release asset):
+
+- [model_swinvit.pt](https://github.com/Project-MONAI/MONAI-extra-test-data/releases/download/0.8.1/model_swinvit.pt)
+
+That file is attached to a **GitHub Release**, not stored as a normal blob inside the git tree. Release assets can be much larger than GitHub’s **~100 MB per file** limit for ordinary commits, which is why projects like MONAI can distribute it while you cannot commit the same file directly into your repository.
+
+Download it locally (from the repo root), then point `swin_vit.pretrained_weights` at the path:
+
+```bash
+mkdir -p models/saved/pretrained
+curl -L -o models/saved/pretrained/model_swinvit.pt \
+  "https://github.com/Project-MONAI/MONAI-extra-test-data/releases/download/0.8.1/model_swinvit.pt"
+```
 
 | Config key | Meaning |
 | ---------- | ------- |
-| `swin_vit.pretrained_weights` | `null` (default) → random encoder weights. Set to a path such as `models/pretrained/ssl_pretrained_weights.pth` (relative paths resolve from the **current working directory**, usually the repo root when using `scripts/run_training.py`). |
+| `swin_vit.pretrained_weights` | `null` (default) → random encoder weights. Set to a path such as `models/saved/pretrained/model_swinvit.pt` (relative paths resolve from the **current working directory**, usually the repo root when using `scripts/run_training.py`). |
 | `swin_vit.pretrained_strict` | `false` (recommended): allow partial load when UNETR checkpoints omit layers or shapes differ slightly. |
 
 If `pretrained_weights` is set but the file is **missing**, training logs a **WARNING** and
 continues **from scratch** (fold CV is not aborted).
 
-Place downloaded checkpoints under [`paths.pretrained_dir`](configs/default.yaml)
-(`models/pretrained/` by convention). You **must align** `embed_dim`, `depths`,
+Place downloaded checkpoints under `models/saved/pretrained/` (see `swin_vit.pretrained_weights` in [`configs/models.yaml`](configs/models.yaml)). You **must align** `embed_dim`, `depths`,
 `num_heads`, `window_size`, and `patch_size` with the recipe used to produce the checkpoint;
 otherwise many tensors are skipped (shape mismatch) and you effectively train mostly random
 layers — see logs from [`src/models/pretrained_swin.py`](src/models/pretrained_swin.py).

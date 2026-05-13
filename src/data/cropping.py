@@ -126,10 +126,13 @@ def crop_patient(
     zscore_stats: dict[str, float] | None = None,
     padding: int | None = None,
     volume_filename: str = "before.nii.gz",
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, Path]:
     """Convenience helper: crop ``before.nii.gz`` using ``before_liver.nii.gz``.
 
-    Returns the paths of the cropped NIfTI and the crop_metadata JSON.
+    Returns the paths of:
+    1) cropped volume NIfTI,
+    2) crop_metadata JSON,
+    3) cropped liver mask NIfTI.
     """
     if padding is None:
         raise ValueError(
@@ -141,6 +144,7 @@ def crop_patient(
     volume_path = patient_dir / volume_filename
     mask_path = patient_dir / "before_liver.nii.gz"
     cropped_path = patient_dir / "before_cropped.nii.gz"
+    cropped_mask_path = patient_dir / "before_liver_cropped.nii.gz"
     metadata_path = patient_dir / "crop_metadata.json"
 
     nii = nib.load(str(volume_path))
@@ -164,6 +168,21 @@ def crop_patient(
 
     cropped_nii = nib.Nifti1Image(cropped, affine=new_affine, header=nii.header.copy())
     nib.save(cropped_nii, str(cropped_path))
+
+    # Crop the liver mask with the *same* bbox to keep exact geometry
+    # alignment with before_cropped.nii.gz for downstream radiomics.
+    start = np.asarray(meta["bbox"]["start"], dtype=int)
+    stop = np.asarray(meta["bbox"]["stop"], dtype=int)
+    slices = tuple(slice(int(a), int(b)) for a, b in zip(start, stop))
+    cropped_mask = mask[slices].astype(np.uint8)
+    cropped_mask_nii = nib.Nifti1Image(
+        cropped_mask,
+        affine=new_affine,
+        header=mask_nii.header.copy(),
+    )
+    nib.save(cropped_mask_nii, str(cropped_mask_path))
+    logger.info("Saved cropped liver mask -> %s", cropped_mask_path)
+
     cropper.save_metadata(meta, metadata_path)
 
     logger.info(
@@ -172,4 +191,4 @@ def crop_patient(
         meta["bbox"]["start"],
         meta["bbox"]["stop"],
     )
-    return cropped_path, metadata_path
+    return cropped_path, metadata_path, cropped_mask_path

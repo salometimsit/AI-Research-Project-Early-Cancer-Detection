@@ -1,0 +1,38 @@
+# Patient data (NEVER commit)
+data/raw/
+data/processed/
+*.nii.gz
+*.dcm
+
+# Generated artifacts
+data/raw_radiomics_features.csv
+data/varfs_filtered_features.csv
+data/deep_features.csv
+models/saved/pretrained/*.pth
+models/saved/pretrained/*.pt
+results/
+attention/
+Plots/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.eggs/
+
+# Environment
+.venv/
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db

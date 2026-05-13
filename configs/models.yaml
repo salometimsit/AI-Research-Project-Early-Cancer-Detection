@@ -1,0 +1,63 @@
+# Model-centric hyperparameters and constants.
+# This file is deep-merged into configs/default.yaml by src.utils.config.load_config.
+
+swin_vit:
+  img_size: [96, 96, 96]            # cropped liver volume size fed to SwinViT
+  patch_size: [4, 4, 4]             # 3D patch tokenisation size
+  in_channels: 1                    # single-channel CT input
+  embed_dim: 48                     # base embedding dim (Swin-Tiny preset)
+  depths: [2, 2, 6, 2]              # Swin-Tiny stage depths
+  num_heads: [3, 6, 12, 24]         # attention heads per stage (doubles each stage)
+  window_size: [6, 6, 6]            # 96 / 6 = 16 (must divide img_size evenly; 7 does not)
+  mlp_ratio: 4.0                    # MLP hidden dim = mlp_ratio * embed_dim
+  drop_path_rate: 1.0e-1            # stochastic depth rate
+  dropout: 1.0e-1
+  use_checkpoint: true              # memory-saving gradient checkpointing in Swin blocks
+  pretrained_weights: "models/saved/pretrained/model_swinvit.pt"  # optional path to warm-start encoder
+  pretrained_strict: false          # strict key match for pretrained loading
+  pretrained_load_target: "cpu"     # "cpu" or "model_device" for checkpoint map_location
+  pretrained_unwrap_keys: ["state_dict", "model", "net", "weights"]
+  pretrained_unwrap_max_depth: 6
+  pretrained_unknown_prefix_samples: 8
+  pretrained_shape_mismatch_preview: 5
+
+cross_attention:
+  num_heads: 4                      # multi-head attention heads in the fusion layer
+  hidden_dim: 256                   # query/key/value projection dim
+  dropout: 1.0e-1                   # shared dropout for attention and MLP paths
+
+# Fusion CV (Phase 5) — CSV schema, batch keys, and merge diagnostics.
+fusion_training:
+  merge_coverage_warn_fraction: 0.8 # warn if merged rows < this * len(radiomics cohort)
+  positive_class_index: 1          # softmax index for OOF positive-class probability
+  csv_patient_id_column: "patient_id"
+  csv_label_column: "label"
+  csv_score_column: "score"
+  batch_radio_key: "radio"
+  batch_deep_key: "deep"
+  batch_label_key: "label"
+
+model:
+  architecture: "resnet3d_18"
+  pretrained_weights: "medicalnet"  # MedicalNet or MONAI
+  freeze_blocks: 2                  # freeze first N residual blocks
+  dropout: 0.5
+  num_classes: 2
+  focal_loss:
+    gamma: 2.0
+    reduction: "mean"
+    fallback_alpha: 0.5
+  early_stopping:
+    min_delta: 1.0e-4              # criterion: val_loss when val_auc is nan
+    min_delta_auc: 1.0e-4         # criterion: -val_auc when val_auc is defined
+  trainer:
+    grad_clip_max_norm: 1.0      # null disables gradient clipping
+    cuda_empty_cache_between_train_val: true
+
+model_cv:
+  n_folds: 5
+  num_workers: 4
+  weighted_sampler: true
+  checkpoint_map_location: "cpu"
+  # After each SwinViT CV fold: drop heavy refs + gc + optional CUDA cache flush (VRAM peak).
+  cuda_cleanup_between_folds: true

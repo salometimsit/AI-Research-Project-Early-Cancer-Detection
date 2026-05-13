@@ -27,7 +27,7 @@ radiomics:
   min_mask_voxels: 50
   io:
     volume_filename: "before_cropped.nii.gz"
-    mask_filename: "before_liver.nii.gz"
+    mask_filename: "before_liver_cropped.nii.gz"
   progress:
     desc: "Radiomics extraction"
     unit: "patient"
