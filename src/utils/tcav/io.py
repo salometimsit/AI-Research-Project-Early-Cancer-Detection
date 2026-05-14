@@ -39,6 +39,8 @@ def save_cav_accuracies(
     path: Path | str,
     params: dict | None = None,
     p_vals: dict[str, float] | None = None,
+    *,
+    is_significant: dict[str, bool] | None = None,
 ) -> Path:
     """Persist per-CAV training metadata as a JSON table.
 
@@ -54,13 +56,17 @@ def save_cav_accuracies(
     p_vals:
         Per-concept permutation p-values from
         :meth:`TCAV3D.compute_significance`. Saved alongside ``is_significant``
-        (threshold 0.05) so reviewers can verify statistical validity.
+        so reviewers can verify statistical validity.
+    is_significant:
+        Optional per-concept flags (e.g. Bonferroni-corrected). When
+        provided, overrides the default ``p < significance_threshold`` rule.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     _p = p_vals or {}
     _params = params or {}
     sig_th = float(_params.get("significance_threshold", 0.05))
+    _sig = is_significant or {}
     data = {
         name: {
             "train_accuracy": rec.train_accuracy,
@@ -68,7 +74,11 @@ def save_cav_accuracies(
             "n_negative": rec.n_negative,
             "config": _params,
             "p_value": _p.get(name, float("nan")),
-            "is_significant": _p.get(name, 1.0) < sig_th,
+            "is_significant": (
+                bool(_sig[name])
+                if name in _sig
+                else bool(_p.get(name, 1.0) < sig_th)
+            ),
         }
         for name, rec in records.items()
     }

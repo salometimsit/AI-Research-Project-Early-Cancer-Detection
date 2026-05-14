@@ -1,9 +1,6 @@
----
-description: Project-wide code conventions for the HCC pipeline
-alwaysApply: true
----
-
 # Project Conventions
+
+Project-wide code conventions for the HCC pipeline. Always apply.
 
 - Add type hints to every function signature.
 - Use Google-style docstrings on all public functions and classes.
@@ -27,7 +24,7 @@ alwaysApply: true
 - Log entry/exit of important functions at `DEBUG` level using
   `src.utils.logger.get_logger(__name__)`.
 
-# Module documentation template
+## Module documentation template
 
 Every new module under `src/` must start with a docstring that includes:
 
@@ -36,7 +33,7 @@ Every new module under `src/` must start with a docstring that includes:
 - "Inputs", "Outputs", "Side effects" sections.
 - "Failure modes" listing typical errors and what they mean.
 
-# Logging and run metadata
+## Logging and run metadata
 
 - Each `scripts/*.py` entry point must:
   - Accept `--log-level {DEBUG,INFO,WARNING,ERROR}` and forward to `setup_logger`.

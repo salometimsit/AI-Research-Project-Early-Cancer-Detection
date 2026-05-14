@@ -28,6 +28,7 @@ Failure modes
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset, WeightedRandomSampler
 
+from src.data.preprocessing import ZScoreNormalizer
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -57,6 +59,10 @@ class HCCDataset(Dataset):
         target_size: tuple[int, int, int] | None = None,
         allow_missing: bool = True,
         augmentation_seed_base: int | None = None,
+        *,
+        zscore_enabled: bool = False,
+        zscore_scope: str = "liver_only",
+        zscore_cfg: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the HCC dataset from processed crops + labels.
 
@@ -74,13 +80,41 @@ class HCCDataset(Dataset):
                 transform random-state control. If provided and the transform
                 supports ``set_random_state``, each item uses
                 ``base + epoch * len(dataset) + idx``.
+            zscore_enabled: If ``True``, apply liver-mask Z-score in
+                ``__getitem__`` using ``before_liver.nii.gz`` and
+                ``crop_metadata.json`` (same geometry as preprocessing). Use
+                when ``before_cropped.nii.gz`` holds HU-windowed intensities only
+                (``preprocessing.zscore.enabled: false``). If the pipeline
+                already wrote Z-scored crops, keep this ``False`` to avoid
+                double-normalisation.
+            zscore_scope: Only ``"liver_only"`` is implemented (must match
+                preprocessing); other values log a warning and behave as
+                ``"liver_only"``.
+            zscore_cfg: Optional ``preprocessing.zscore`` dict (``std_epsilon``,
+                ``std_fallback``, ``background_fill_value``) aligned with
+                ``configs/data.yaml``.
         """
         self.processed_dir = Path(processed_dir)
         self.transform = transform
         self.target_size = target_size
         self.allow_missing = allow_missing
         self.augmentation_seed_base = augmentation_seed_base
+        self._zscore_enabled = bool(zscore_enabled)
+        self._zscore_scope = str(zscore_scope)
+        self._zscore_cfg: dict[str, Any] = dict(zscore_cfg or {})
         self._epoch = 0
+
+        if self._zscore_scope != "liver_only":
+            logger.warning(
+                "HCCDataset zscore_scope=%r is not supported; using liver_only.",
+                self._zscore_scope,
+            )
+            self._zscore_scope = "liver_only"
+        if self._zscore_enabled:
+            logger.debug(
+                "HCCDataset: runtime liver Z-score enabled (params from zscore_cfg keys=%s).",
+                sorted(self._zscore_cfg.keys()),
+            )
 
         labels_df = pd.read_csv(labels_csv)
         records: list[tuple[str, Path, int]] = [
@@ -134,6 +168,42 @@ class HCCDataset(Dataset):
             volume = _resize_volume(volume, self.target_size, is_mask=False)
         return volume
 
+    def _apply_runtime_zscore(self, volume: np.ndarray, vol_path: Path) -> np.ndarray:
+        """Z-score ``volume`` using a liver mask crop matching ``vol_path``."""
+        patient_dir = vol_path.parent
+        meta_path = patient_dir / "crop_metadata.json"
+        mask_path = patient_dir / "before_liver.nii.gz"
+        if not meta_path.exists():
+            raise FileNotFoundError(
+                f"Runtime Z-score requires crop metadata: {meta_path}"
+            )
+        if not mask_path.exists():
+            raise FileNotFoundError(
+                f"Runtime Z-score requires full-field liver mask: {mask_path}"
+            )
+        with open(meta_path, "r", encoding="utf-8") as fh:
+            meta = json.load(fh)
+        bbox = meta["bbox"]
+        start, stop = bbox["start"], bbox["stop"]
+        slices = tuple(slice(int(a), int(b)) for a, b in zip(start, stop))
+        mask_full = nib.load(str(mask_path)).get_fdata().astype(np.uint8)
+        mask_crop = mask_full[slices].astype(np.uint8)
+        if mask_crop.shape != volume.shape:
+            raise ValueError(
+                f"Liver mask crop shape {mask_crop.shape} != volume {volume.shape} "
+                f"for {vol_path}"
+            )
+        cfg = self._zscore_cfg
+        normalizer = ZScoreNormalizer()
+        out, _stats = normalizer.normalize(
+            volume,
+            mask_crop,
+            std_epsilon=float(cfg.get("std_epsilon", 1e-6)),
+            std_fallback=str(cfg.get("std_fallback", "one")),
+            background_fill_value=float(cfg.get("background_fill_value", 0.0)),
+        )
+        return out.astype(np.float32)
+
     def set_epoch(self, epoch: int) -> None:
         """Set the current epoch used for deterministic augmentation seeds."""
         self._epoch = int(epoch)
@@ -141,6 +211,8 @@ class HCCDataset(Dataset):
     def __getitem__(self, idx: int) -> dict[str, Any]:
         pid, vol_path, label = self.samples[idx]
         volume = self._load_volume(vol_path)
+        if self._zscore_enabled:
+            volume = self._apply_runtime_zscore(volume, vol_path)
         sample: dict[str, Any] = {
             "image": volume[np.newaxis, ...],
             "label": label,

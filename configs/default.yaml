@@ -22,6 +22,8 @@ drive:
   # Example:
   #   P001: "<google_drive_file_id>"
   #   P002: "<google_drive_file_id>"
+  # gdown: tolerate slightly different URLs / Drive virus-scan interstitials.
+  gdown_fuzzy: true
   patient_files: {}
 
 preprocessing:
@@ -64,14 +66,20 @@ training:
 
 evaluation:
   cross_validation:
-    strategy: "leave_one_patient_out"   # or "kfold"
-    n_folds: 5
-  metrics:
-    - "auc_roc"
+    # "kfold" -> StratifiedKFold with model_cv.n_folds splits.
+    # "leave_one_patient_out" -> LeaveOneOut; each val fold is a single patient.
+    # With LOO every val set is single-class -> per-fold AUC will be NaN and the
+    # val_loss fallback in run_swinvit_cv / run_fusion_cv picks the best fold.
+    strategy: "kfold"
+  metrics:                          # whitelist applied to run_evaluation outputs.
+    - "auc_roc"                     # remove a name to drop it from evaluation_metrics.json.
     - "sensitivity"
     - "specificity"
+    - "precision"
+    - "f1_score"
     - "precision_recall_auc"
-  gradcam: true
+  export_attention_heatmaps: true   # default; --skip-heatmaps on the CLI overrides to skip.
+  threshold: 0.5                    # decision threshold for binary metrics + inference label.
 
 tcav:
   # Layer hook for activation extraction / gradients (must sit on the forward path).

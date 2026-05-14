@@ -451,6 +451,7 @@ def run_fusion_cv(cfg: dict[str, Any]) -> None:
     )
 
     skf = make_kfold(cfg, y)
+    total_folds = int(skf.get_n_splits(x_radio, y))
     oof = np.full(len(y), np.nan)
     fold_aucs: list[float] = []
     model_dir = Path(cfg["paths"]["model_save_dir"])
@@ -469,7 +470,7 @@ def run_fusion_cv(cfg: dict[str, Any]) -> None:
     for fold, (train_idx, val_idx) in enumerate(
         tqdm(splits, desc="Fusion folds", unit="fold"), start=1
     ):
-        log_section(logger, f"Fusion fold {fold}/{skf.n_splits}", char="-")
+        log_section(logger, f"Fusion fold {fold}/{total_folds}", char="-")
         try:
             scores, val_loss = _train_one_fold(
                 cfg, fold, feature_dataset, train_idx, val_idx,

@@ -254,12 +254,15 @@ def plot_tcav_scores(
     title: str = "TCAV scores",
     significance_threshold: float = 0.05,
     viz_cfg: dict | None = None,
+    *,
+    significant: dict[str, bool] | None = None,
 ) -> Path:
     """Horizontal bar chart of TCAV scores with significance markers.
 
-    Concepts with ``p_values[concept] < significance_threshold`` are
-    annotated with a trailing ``"*"``. Bars are sorted descending by
-    score so the strongest concepts appear at the top.
+    Concepts marked significant show a trailing ``"*"``. When
+    ``significant`` is provided (e.g. Bonferroni-corrected flags), it
+    controls the markers; otherwise ``p_values[concept] <
+    significance_threshold`` is used.
     """
     if not scores:
         logger.warning("plot_tcav_scores called with empty scores; skipping.")
@@ -275,7 +278,10 @@ def plot_tcav_scores(
     values = []
     for concept, score in items:
         p = p_values.get(concept, float("nan"))
-        marker = "*" if not np.isnan(p) and p < significance_threshold else ""
+        if significant is not None:
+            marker = "*" if significant.get(concept, False) else ""
+        else:
+            marker = "*" if not np.isnan(p) and p < significance_threshold else ""
         labels.append(f"{concept}{marker}")
         values.append(score)
 
@@ -288,7 +294,8 @@ def plot_tcav_scores(
     ax.invert_yaxis()
     ax.set_xlabel("TCAV score (fraction positive directional derivatives)")
     ax.set_xlim(0, 1)
-    ax.set_title(f"{title} ({significance_threshold * 100:.0f}% sig. marked '*')")
+    sig_note = "Bonferroni sig." if significant is not None else f"{significance_threshold * 100:.0f}% sig."
+    ax.set_title(f"{title} ({sig_note} marked '*')")
     for i, v in enumerate(values):
         ax.text(min(v + 0.01, 0.98), i, f"{v:.2f}", va="center", fontsize=8)
     fig.tight_layout()

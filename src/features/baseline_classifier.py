@@ -83,6 +83,7 @@ class RadiomicsBaseline:
         self.scaler: StandardScaler | None = None
         self.oof_scores_: np.ndarray | None = None
         self.oof_pids_: list[str] = []
+        self.oof_labels_: list[int] = []
 
     def _build_model(self) -> RandomForestClassifier:
         """Build a fresh baseline model instance from config."""
@@ -145,7 +146,8 @@ class RadiomicsBaseline:
 
         Stratified k-fold CV is run with ``n_folds = min(5, smallest
         class count)`` (and at least 2 folds). The OOF predictions are
-        cached on ``self.oof_scores_`` / ``self.oof_pids_`` so callers
+        cached on ``self.oof_scores_`` / ``self.oof_pids_`` /
+        ``self.oof_labels_`` (row-aligned with ``features_df``) so callers
         can persist them without re-running the model.
 
         Args:
@@ -156,6 +158,9 @@ class RadiomicsBaseline:
             ``accuracy_mean`` and ``n_folds``.
         """
         x, y = self._split_xy(features_df)
+        self.oof_scores_ = None
+        self.oof_pids_ = []
+        self.oof_labels_ = []
         min_class_count = int(np.bincount(y).min())
         if min_class_count < 2:
             raise RuntimeError(
@@ -204,6 +209,7 @@ class RadiomicsBaseline:
 
         self.oof_scores_ = oof
         self.oof_pids_ = features_df["patient_id"].astype(str).tolist()
+        self.oof_labels_ = y.astype(int).tolist()
 
         self.imputer, self.scaler = self._fit_preprocessor(x)
         x_full = self._transform_features(x, self.imputer, self.scaler)

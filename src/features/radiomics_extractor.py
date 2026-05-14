@@ -15,7 +15,8 @@ Outputs
 -------
 * ``data/raw_radiomics_features.csv`` -- one row per patient, one
   column per PyRadiomics feature plus ``patient_id`` and ``label``.
-  Rows are appended incrementally during ``extract_all`` to limit RAM.
+  By default, an existing CSV is reused and only **missing** patients are
+  extracted; use ``force=True`` to rebuild from scratch.
 
 Failure modes
 -------------
@@ -25,6 +26,9 @@ Failure modes
   ``min_mask_voxels`` -> skipped with a warning.
 * PyRadiomics raising on a degenerate mask -> the failure is caught and
   the patient is skipped; the rest of the run continues.
+* Resuming extraction when new feature names do not match the saved CSV
+  -> ``RuntimeError``; delete the CSV or call ``extract_all(...,
+  force=True)``.
 """
 
 from __future__ import annotations
@@ -185,22 +189,54 @@ class RadiomicsExtractor:
         processed_dir: Path | str,
         labels_csv: Path | str,
         output_csv: Path | str,
+        *,
+        force: bool = False,
     ) -> pd.DataFrame:
         """Extract radiomics for every patient that has a cropped volume + mask.
 
-        ``output_csv`` is appended row-by-row so RAM stays bounded and partial
-        progress survives interruptions. The returned DataFrame is read back
-        from that CSV (same columns as on disk).
+        When ``output_csv`` already exists and ``force`` is ``False``, loads
+        that table and only extracts patients listed in ``labels_csv`` whose
+        ``patient_id`` is absent from the file. When ``force`` is ``True``,
+        deletes any existing file and recomputes all rows.
+
+        Args:
+            processed_dir: Root of per-patient processed folders.
+            labels_csv: Table with ``patient_id`` and ``label``.
+            output_csv: Destination CSV path.
+            force: If ``True``, ignore any existing CSV and re-extract everyone.
+
+        Returns:
+            The combined feature table read back from ``output_csv`` (may be
+            empty if no rows were written).
         """
         processed_dir = Path(processed_dir)
         labels_df = pd.read_csv(labels_csv)
         output_csv = Path(output_csv)
         output_csv.parent.mkdir(parents=True, exist_ok=True)
-        if output_csv.exists():
-            output_csv.unlink()
 
-        column_order: list[str] | None = None
-        rows_written = 0
+        existing = pd.DataFrame()
+        existing_pids: set[str] = set()
+        if output_csv.exists() and not force:
+            existing = pd.read_csv(output_csv)
+            if not existing.empty and "patient_id" in existing.columns:
+                existing_pids = set(existing["patient_id"].astype(str))
+                logger.info(
+                    "Found existing raw radiomics at %s (%d rows). "
+                    "Extracting only missing patients (use force to rebuild).",
+                    output_csv,
+                    len(existing),
+                )
+            else:
+                existing = pd.DataFrame()
+                existing_pids = set()
+        elif output_csv.exists() and force:
+            output_csv.unlink()
+            logger.info("Removed %s (--force-radiomics rebuild).", output_csv)
+
+        column_order: list[str] | None = (
+            list(existing.columns) if not existing.empty else None
+        )
+        new_rows: list[dict[str, Any]] = []
 
         for _, row in tqdm(
             list(labels_df.iterrows()),
@@ -208,6 +244,8 @@ class RadiomicsExtractor:
             unit=self._progress_unit,
         ):
             pid = str(row["patient_id"])
+            if pid in existing_pids:
+                continue
             patient_dir = processed_dir / pid
             volume_path = patient_dir / self._volume_filename
             mask_path = patient_dir / self._mask_filename
@@ -229,25 +267,61 @@ class RadiomicsExtractor:
                     k for k in feats if k not in ("patient_id", "label")
                 )
                 column_order = ["patient_id", "label", *feature_keys]
+            else:
+                expected_features = [
+                    c for c in column_order if c not in ("patient_id", "label")
+                ]
+                missing_cols = [c for c in expected_features if c not in feats]
+                if missing_cols:
+                    raise RuntimeError(
+                        "Radiomics resume: extracted features for "
+                        f"{pid} are missing columns {missing_cols[:8]!s}. "
+                        "Re-run with --force-radiomics to rebuild the CSV."
+                    )
+                extra_keys = {
+                    k
+                    for k in feats
+                    if k not in column_order and k not in ("patient_id", "label")
+                }
+                if extra_keys:
+                    raise RuntimeError(
+                        "Radiomics resume: unexpected feature keys "
+                        f"{sorted(extra_keys)[:12]!s} for {pid}. "
+                        "Re-run with --force-radiomics to rebuild the CSV."
+                    )
 
             row_out: dict[str, Any] = {c: feats.get(c) for c in column_order}
-            df_single = pd.DataFrame([row_out])
-            mode = "w" if rows_written == 0 else "a"
-            header = rows_written == 0
-            df_single.to_csv(output_csv, mode=mode, index=False, header=header)
-            rows_written += 1
+            new_rows.append(row_out)
 
-        if rows_written == 0:
-            df = pd.DataFrame()
+        if new_rows:
+            append_df = pd.DataFrame(new_rows)
+            if not existing.empty:
+                append_df = append_df.reindex(columns=existing.columns)
+                combined = pd.concat([existing, append_df], ignore_index=True)
+            else:
+                combined = append_df
+            combined.to_csv(output_csv, index=False)
+            logger.info(
+                "Saved radiomics features (%d patients, %d new) -> %s",
+                len(combined),
+                len(new_rows),
+                output_csv,
+            )
+            return combined
+
+        if existing.empty:
+            if output_csv.exists():
+                output_csv.unlink(missing_ok=True)
             logger.warning(
                 "No radiomics rows written; CSV not created or empty -> %s",
                 output_csv,
             )
-        else:
-            df = pd.read_csv(output_csv)
-            logger.info(
-                "Saved radiomics features (%d patients) -> %s",
-                rows_written,
-                output_csv,
-            )
-        return df
+            return pd.DataFrame()
+
+        existing.to_csv(output_csv, index=False)
+        logger.info(
+            "Radiomics CSV unchanged (%d patients) -> %s",
+            len(existing),
+            output_csv,
+        )
+        return existing

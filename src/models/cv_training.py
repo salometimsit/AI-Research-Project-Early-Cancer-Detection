@@ -41,7 +41,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import LeaveOneOut, StratifiedKFold
 from torch.utils.data import DataLoader, Subset
 
 from src.data.dataset import HCCDataset, get_3d_augmentation, get_weighted_sampler
@@ -155,8 +155,30 @@ def make_focal_loss(cfg: dict[str, Any], train_labels: np.ndarray) -> FocalLoss:
     return FocalLoss(alpha=alpha, gamma=gamma, reduction=reduction)
 
 
-def make_kfold(cfg: dict[str, Any], labels: np.ndarray) -> StratifiedKFold:
-    """Build a :class:`StratifiedKFold` honouring the configured fold count."""
+def make_kfold(cfg: dict[str, Any], labels: np.ndarray) -> Any:
+    """Build a CV splitter honouring ``evaluation.cross_validation.strategy``.
+
+    Returns:
+        * :class:`StratifiedKFold` when ``strategy == "kfold"`` (default),
+          using ``model_cv.n_folds`` capped at the smallest-class count.
+        * :class:`LeaveOneOut` when ``strategy == "leave_one_patient_out"``;
+          each validation fold contains one patient, so per-fold AUC is
+          undefined — best-fold selection falls back to ``val_loss``.
+
+    Both returned objects expose ``.split(X, y)`` and ``.get_n_splits(X, y)``.
+    """
+    strategy = str(
+        cfg.get("evaluation", {})
+        .get("cross_validation", {})
+        .get("strategy", "kfold")
+    ).lower()
+    if strategy == "leave_one_patient_out":
+        return LeaveOneOut()
+    if strategy != "kfold":
+        get_logger("hcc.training").warning(
+            "Unknown evaluation.cross_validation.strategy=%r; falling back to kfold.",
+            strategy,
+        )
     cv_cfg = cfg["model_cv"]
     n_folds = int(cv_cfg["n_folds"])
     smallest_class = int(np.bincount(labels).min()) or n_folds
@@ -247,7 +269,6 @@ def run_swinvit_cv(cfg: dict[str, Any]) -> None:
     cv_cfg = cfg["model_cv"]
     logs_dir = Path(cfg["paths"]["logs_dir"])
     cuda_cleanup_between_folds = bool(cv_cfg["cuda_cleanup_between_folds"])
-    logger.info("Phase 4: SwinViT %d-fold CV on %s", int(cv_cfg["n_folds"]), device)
 
     target_size = tuple(cfg["swin_vit"]["img_size"])
     transform = get_3d_augmentation(cfg)
@@ -276,17 +297,26 @@ def run_swinvit_cv(cfg: dict[str, Any]) -> None:
     oof_csv_path.parent.mkdir(parents=True, exist_ok=True)
     deep_csv_path.parent.mkdir(parents=True, exist_ok=True)
     skf = make_kfold(cfg, labels)
+    total_folds = int(skf.get_n_splits(np.zeros(len(labels)), labels))
+    cv_strategy = (
+        cfg.get("evaluation", {}).get("cross_validation", {}).get("strategy", "kfold")
+    )
+    logger.info(
+        "Phase 4: SwinViT CV (strategy=%s, n_folds=%d) on %s",
+        cv_strategy, total_folds, device,
+    )
 
     oof_scores = np.full(len(labels), np.nan)
     oof_deep: dict[int, np.ndarray] = {}
     fold_aucs: list[float] = []
     best_fold_idx = -1
     best_fold_auc = -float("inf")
+    best_fold_loss = float("inf")
 
     for fold, (train_idx, val_idx) in enumerate(
         skf.split(np.zeros(len(labels)), labels), start=1
     ):
-        log_section(logger, f"SwinViT fold {fold}/{skf.n_splits}", char="-")
+        log_section(logger, f"SwinViT fold {fold}/{total_folds}", char="-")
         train_loader, val_loader = _make_loaders(cfg, dataset, train_idx, val_idx)
         model = build_swin(cfg)
         _maybe_load_swin_pretrained(model, cfg)
@@ -310,9 +340,20 @@ def run_swinvit_cv(cfg: dict[str, Any]) -> None:
             continue
 
         logger.info("Fold %d summary: %s", fold, summary)
-        fold_aucs.append(float(summary["best_val_auc"]))
-        if summary["best_val_auc"] > best_fold_auc:
-            best_fold_auc = float(summary["best_val_auc"])
+        val_auc = float(summary["best_val_auc"])
+        val_loss = float(summary["best_val_loss"])
+        fold_aucs.append(val_auc)
+
+        # Mirror fusion_training: when AUC is finite, pick best by AUC.
+        # When every epoch of a fold had a single-class val set (AUC=nan ->
+        # trainer leaves best_val_auc at -inf), fall back to val_loss so the
+        # canonical checkpoint still gets promoted.
+        if np.isfinite(val_auc) and val_auc > best_fold_auc:
+            best_fold_auc = val_auc
+            best_fold_loss = val_loss
+            best_fold_idx = fold
+        elif not np.isfinite(val_auc) and val_loss < best_fold_loss:
+            best_fold_loss = val_loss
             best_fold_idx = fold
 
         bundle = torch.load(fold_ckpt, map_location=device, weights_only=True)
